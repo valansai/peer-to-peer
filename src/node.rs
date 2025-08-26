@@ -104,7 +104,7 @@ impl Node {
         T: Serialize,
 
     {
-        info!("[*] Pushing {} to {:?}", command, self.addr.address);
+        info!("[*] Pushing {} to {}", command, self.addr);
         self.begin_message(command, false).await?;
         {
             let mut data_send = self.data_send.lock().await;

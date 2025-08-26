@@ -28,6 +28,8 @@ use nymlib::nymsocket::impl_to_for;
 use nymlib::serialize::Serialize;
 use nymlib::serialize_derive::impl_serialize_for_struct;
 
+use std::fmt;
+
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct Address {
     pub address: SockAddr,     // Wrapped SockAddr (nym address, anonymous sendertag, or null)
@@ -58,6 +60,12 @@ impl Address {
     /// Returns true if the address represents a null value.
     pub fn is_null(&self) -> bool {
         self.address.is_null()
+    }
+}
+
+impl fmt::Display for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, " Address(address={:?}, services={})", self.address.to_string(), self.services)
     }
 }
 

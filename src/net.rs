@@ -84,19 +84,27 @@ pub async fn find_node<A: Into<Address>>(addr: A) -> Option<Arc<Mutex<Node>>> {
     None
 }
 
-// Add a peer address if not already in VADDRESSES
+// Add a peer address if not already in VADDRESSES and to addresses.txt
 pub async fn add_peer_address(addr: Address) {
     let mut vaddresses = VADDRESSES.lock().await;
-
     if !vaddresses.iter().any(|a| a.address == addr.address) {
-        vaddresses.push(addr.clone());
+        vaddresses.push(addr.clone()); // runtime 
+
+        // Persist peer addresses to addresses.txt so we can be reused
+        // across runs, rather than being lost when the node shuts down.
+        let addr_str = addr.address.to_string();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("addresses.txt")
+            .await 
+            .expect("[*] add_peer_address() - Failed to open addresses.txt");
+        file.write_all(format!("{}\n", addr_str).as_bytes())
+            .await
+            .expect("[*] add_peer_address() - Failed to write to addresses.txt");
     }
-
-    // TODO
-    // Persist peer addresses to addresses.txt so we can be reused
-    // across runs, rather than being lost when the node shuts down.
-
 }
+
 
 // Load addresses from a file
 pub async fn load_addresses(file_path: &str) -> std::io::Result<()> {
@@ -241,7 +249,7 @@ pub async fn send_messages() -> std::io::Result<()> {
                         if socket.send(message, node.addr.clone()).await {
                             data_send.data.clear();
                         } else {
-                            debug!("[send_messages] Failed to send message to {:?}", node.addr);
+                            debug!("[send_messages] Failed to send message to {}", node.addr);
                         }
                     }
                 }
@@ -299,14 +307,14 @@ pub async fn handle_messages() -> std::io::Result<()> {
 
                     // If from known node, update its recv buffer
                     if let Some(node) = find_node(from_addr.clone()).await {
-                        info!("[*] Processing message from already connected node, addr: {:?}", from_addr);
+                        info!("[*] Processing message from already connected node, addr: {:?}", from_addr.to_string());
                         let mut node_guard = node.lock().await;
                         node_guard.data_recv.lock().await.write(&message.data); // write the received message 
                         node_guard.stats.last_time_recv = get_time();  // update its last time recv 
                     } else 
                     {
                         // New node, create and add it
-                        info!("[*] Processing message from a new node, addr: {:?}", from_addr);
+                        info!("[*] Processing message from a new node, addr: {:?}", from_addr.to_string());
 
                         let node = Node::new(from_addr.clone().into(), None).await;
                         let node = Arc::new(Mutex::new(node));
@@ -450,20 +458,18 @@ pub async fn process_message(node: &mut tokio::sync::MutexGuard<'_, Node>, comma
     match command {
         COMMANDS::VERSION => {
             // Handle VERSION message
-            info!("[*] Received a VERSION message from {:?}", node.addr.address);
+            info!("[*] Received a VERSION message from {}", node.addr);
             if node.version != 0 {
                 // Ignore duplicate VERSION messages
-                info!("[*] Duplicate VERSION message from {:?}", node.addr.address);
+                info!("[*] Duplicate VERSION message from {}", node.addr);
                 return false; 
             }
 
             match msg.stream_out::<u32>() {
                 Ok(version) => {
                     if version == 1 {
-                        // Set the node version
-                        node.version = version; 
-                        // Queue a VERACK message
-                        node.push_message(COMMANDS::VERACK, ()).await; 
+                        node.version = version; // Set the node version
+                        node.push_message(COMMANDS::VERACK, ()).await; // Queue a VERACK message
 
                         // If node is individual, add its address to known peers
                         if node.is_individual() {
@@ -484,15 +490,15 @@ pub async fn process_message(node: &mut tokio::sync::MutexGuard<'_, Node>, comma
 
         COMMANDS::VERACK => {
             // Handle VERACK message
-            info!("[*] Received VERACK message from {:?}", node.addr.address);
+            info!("[*] Received VERACK message from {}", node.addr);
             // Queue a ADDR message, here we ask remote peer for addresses
-            node.push_message(COMMANDS::ADDR, ()).await; 
+            node.version = 1; // consider same version 
             true 
         }
 
         COMMANDS::ADDR => {
             // Handle ADDR message, send addresses to peer, filter out addresses already sent
-            info!("[*] Received ADDR message from {:?}", node.addr.address);
+            info!("[*] Received ADDR message from {}", node.addr);
             let addresses: Vec<Address> = {
                 let vaddresses = VADDRESSES.lock().await;
                 vaddresses.clone()
@@ -522,7 +528,7 @@ pub async fn process_message(node: &mut tokio::sync::MutexGuard<'_, Node>, comma
 
         COMMANDS::GETADDR => {
             // Handle GETADDR message
-            info!("[*] Received GETADDR message from {:?}", node.addr.address);
+            info!("[*] Received GETADDR message from {}", node.addr);
 
             let local_addr = {
                 let local_addr_opt = LOCAL_ADDR.lock().await;
@@ -569,30 +575,32 @@ pub async fn process_message(node: &mut tokio::sync::MutexGuard<'_, Node>, comma
 
         COMMANDS::PONG => {
             // Handle PONG message, already hanlded by handle_messages, we update node last time recv
-            info!("[*] Received PONG message from {:?}", node.addr.address);
+            info!("[*] Received PONG message from {}", node.addr.address);
             true 
         }
 
         _ => {
             // Unknown command
-            info!("[*] Received unknown message {} from {:?}", command, node.addr.address);
+            info!("[*] Received unknown message {} from {}", command, node.addr.address);
             false 
         }
     }
 }
 
 async fn node_manager() -> std::io::Result<()> {
-    // Task to monitor nodes, remove unresponsive, send pings, and request peer addresses
+    // Task to monitor nodes, curently request peer addresses from already conected nodes
     let mut stop_signal_rx = STOP_SIGNAL.lock().await.as_ref().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotConnected, "Stop signal not initialized")
     })?.subscribe();
 
     info!("[*] node_manager started");
 
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+    let mut peer_request_interval = tokio::time::interval(tokio::time::Duration::from_secs(240));
+    peer_request_interval.tick().await;
 
     loop {
         tokio::select! {
+            // Handle stop signal
             result = stop_signal_rx.recv() => {
                 match result {
                     Ok(true) => {
@@ -604,6 +612,32 @@ async fn node_manager() -> std::io::Result<()> {
                         debug!("[*] Stop signal error in node_manager: {}", e);
                         break Ok(());
                     }
+                }
+            }
+            
+            _ = peer_request_interval.tick() => {
+                // Every 240 seconds (4 minutes) request peer addresses from connected nodes
+                info!("[*] Requesting peer addresses");
+
+                // Get the current number of connected nodes
+                let vnodes_len = {
+                    let vnodes = VNODES.lock().await; 
+                    vnodes.len() // Count the number of nodes
+                };
+
+                // Only proceed with address requests if we have fewer than 10 connected peers. 
+                if vnodes_len < 10 {
+                    let nodes = VNODES.lock().await; 
+                    for node in nodes.iter() { 
+                        let mut node_guard = node.lock().await; 
+                        if node_guard.version == 0 {
+                            debug!("[*] Skipping ADDR message to node {:?}: version not set", node_guard.addr.address.to_string());
+                            continue; // Skip nodes that haven't completed version handshake
+                        }
+                        node_guard.push_message(COMMANDS::ADDR, ()).await; // Queue an ADDR message to request peer addresses
+                    }
+                } else {
+                    debug!("[*] Skipping peer address request: already have {} peers", vnodes_len); 
                 }
             }
         }
@@ -680,9 +714,8 @@ pub async fn start_node(data_dir: Option<&str>, mode: Option<SocketMode>, _remot
     tokio::spawn({ async move { send_messages().await; } });
     tokio::spawn({ async move { handle_messages().await; } });
     tokio::spawn({ async move { process_messages().await; } });
+    tokio::spawn({ async move { node_manager().await; } });
     
-    // tokio::spawn({ async move { node_manager().await; } }); TODO.
-
     tokio::select! {
         _ = signal::ctrl_c() => { stop_node().await; }
         _ = rx.recv() => { stop_node().await; }
