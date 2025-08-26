@@ -173,11 +173,10 @@ pub async fn open_connections() -> std::io::Result<()> {
                     if find_node(addr.clone()).await.is_some() {
                         continue;
                     }
+                    
                     // Skip if our own address
                     if let Some(local) = &local_addr {
                         if addr.address == *local {
-                            println!("open_connections() - skipping");
-                            println!("{:?}", addr.address);
                             continue;
                         }
                     }
