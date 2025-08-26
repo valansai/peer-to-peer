@@ -607,8 +607,6 @@ async fn node_manager() -> std::io::Result<()> {
                     }
                 }
             }
-                
-            }
         }
     }
 }
