@@ -28,6 +28,8 @@ use tokio::sync::Mutex;
 use tokio::signal;
 use std::sync::LazyLock;
 use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
+
 
 use crate::node::{Node, COMMANDS};
 use crate::net_addr::Address;
@@ -567,7 +569,7 @@ pub async fn process_message(node: &mut tokio::sync::MutexGuard<'_, Node>, comma
         }
 
         COMMANDS::PING => {
-            info!("[*] Received PING message from {:?}", node.addr.address);
+            info!("[*] Received PING message from {}", node.addr);
             // Queue a PONG message
             node.push_message(COMMANDS::PONG, ()).await; 
             true 
@@ -575,13 +577,13 @@ pub async fn process_message(node: &mut tokio::sync::MutexGuard<'_, Node>, comma
 
         COMMANDS::PONG => {
             // Handle PONG message, already hanlded by handle_messages, we update node last time recv
-            info!("[*] Received PONG message from {}", node.addr.address);
+            info!("[*] Received PONG message from {}", node.addr);
             true 
         }
 
         _ => {
             // Unknown command
-            info!("[*] Received unknown message {} from {}", command, node.addr.address);
+            info!("[*] Received unknown message {} from {}", command, node.addr);
             false 
         }
     }
