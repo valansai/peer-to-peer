@@ -1,0 +1,10 @@
+[package]
+name = "node-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+node = { path = "../node" }
+nymlib = { workspace = true }
+tokio = { workspace = true }
+clap = { version = "4", features = ["derive"] }
