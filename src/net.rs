@@ -101,9 +101,9 @@ pub async fn add_peer_address(addr: Address) {
             .open("addresses.txt")
             .await 
             .expect("[*] add_peer_address() - Failed to open addresses.txt");
-        file.write_all(format!("{}\n", addr_str).as_bytes())
-            .await
-            .expect("[*] add_peer_address() - Failed to write to addresses.txt");
+        // file.write_all(format!("{}\n", addr_str).as_bytes())
+        //     .await
+        //    .expect("[*] add_peer_address() - Failed to write to addresses.txt");
     }
 }
 
@@ -248,6 +248,13 @@ pub async fn send_messages() -> std::io::Result<()> {
                     if !data_send.empty() {
                         let message = data_send.unread_str().to_vec();
                         let mut socket = p_socket.lock().await;
+                        
+                        if let SocketMode::Anonymous = socket.mode {
+                            // Only anonymous mode needs extra SURBs
+                            // TODO: implement dynamic SURB calculation
+                            socket.extra_surbs = Some(5);
+                        }
+                        
                         if socket.send(message, node.addr.clone()).await {
                             data_send.data.clear();
                         } else {
@@ -633,7 +640,8 @@ async fn node_manager() -> std::io::Result<()> {
                     for node in nodes.iter() { 
                         let mut node_guard = node.lock().await; 
                         if node_guard.version == 0 {
-                            debug!("[*] Skipping ADDR message to node {:?}: version not set", node_guard.addr.address.to_string());
+                            debug!("[*] Skipping ADDR message to node {:?}: version not set",
+                                node_guard.addr.address.to_string());
                             continue; // Skip nodes that haven't completed version handshake
                         }
                         node_guard.push_message(COMMANDS::ADDR, ()).await; // Queue an ADDR message to request peer addresses
