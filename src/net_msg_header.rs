@@ -183,7 +183,7 @@ mod tests {
 
         // VERSION" Command: Expected to have an i32 payload (4 bytes) representing the remote
         // node protocol version. 
-        if deserialized_hdr.command() == "VERSION" {
+        if deserialized_hdr.command() == Ok("VERSION") {
             let deserialized_version = stream_out
                 .stream_out::<i32>()
                 .expect("Version deserialization failed");
